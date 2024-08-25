@@ -4538,6 +4538,10 @@ more information.
 #   dispatch and execution of the runout_gcode. It may be useful to
 #   increase this delay if OctoPrint exhibits strange pause behavior.
 #   Default is 0.5 seconds.
+#debounce_delay: 0.
+#   The amount of time to delay, in seconds, between event dectection
+#   and note change of state. It may be useful to remove switch bounces.
+#   Default is 0. seconds.
 #switch_pin:
 #   The pin on which the switch is connected. This parameter must be
 #   provided.

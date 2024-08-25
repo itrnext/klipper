@@ -25,9 +25,11 @@ class RunoutHelper:
                 config, 'insert_gcode')
         self.pause_delay = config.getfloat('pause_delay', .5, above=.0)
         self.event_delay = config.getfloat('event_delay', 3., above=0.)
+        self.debounce_delay = config.getfloat('debounce_delay', 0., above=0.)
         # Internal state
         self.min_event_systime = self.reactor.NEVER
         self.filament_present = False
+        self.filament_present_next : bool = None
         self.sensor_enabled = True
         # Register commands and event handlers
         self.printer.register_event_handler("klippy:ready", self._handle_ready)
@@ -39,8 +41,9 @@ class RunoutHelper:
             "SET_FILAMENT_SENSOR", "SENSOR", self.name,
             self.cmd_SET_FILAMENT_SENSOR,
             desc=self.cmd_SET_FILAMENT_SENSOR_help)
+        self.debounce_filament_present_handler = self.reactor.register_timer(self.debounce_filament_present, self.reactor.NEVER)
     def _handle_ready(self):
-        self.min_event_systime = self.reactor.monotonic() + 2.
+        self.min_event_systime = self.reactor.monotonic() + self.debounce_delay + 2.
     def _runout_event_handler(self, eventtime):
         # Pausing from inside an event requires that the pause portion
         # of pause_resume execute immediately.
@@ -58,8 +61,33 @@ class RunoutHelper:
             self.gcode.run_script(prefix + template.render() + "\nM400")
         except Exception:
             logging.exception("Script running error")
-        self.min_event_systime = self.reactor.monotonic() + self.event_delay
+        self.min_event_systime = self.reactor.monotonic() + self.debounce_delay + self.event_delay
     def note_filament_present(self, is_filament_present):
+        if self.debounce_delay == 0:
+            # Debounce off
+            self.filament_present_next = None
+            self.note_filament_present_debounced(is_filament_present)
+        elif is_filament_present == self.filament_present and not self.filament_present_next is None:
+            # Debounce
+            self.filament_present_next = None
+            self.reactor.update_timer(self.debounce_filament_present_handler, self.reactor.NEVER)
+            eventtime = self.reactor.monotonic()
+            logging.debug(
+                "Filament Sensor %s: bounce detected, Time %.2f" %
+                (self.name, eventtime))
+        elif is_filament_present != self.filament_present and is_filament_present != self.filament_present_next:
+            # First change only : elimination of duplicates
+            self.filament_present_next = is_filament_present
+            eventtime = self.reactor.monotonic()
+            self.reactor.update_timer(self.debounce_filament_present_handler, eventtime + self.debounce_delay)
+    def debounce_filament_present(self):
+        if self.filament_present_next is None:
+            return self.reactor.NEVER
+        filament_present = self.filament_present_next
+        self.filament_present_next = None
+        self.note_filament_present_debounced(filament_present)
+        return self.reactor.NEVER
+    def note_filament_present_debounced(self, is_filament_present):
         if is_filament_present == self.filament_present:
             return
         self.filament_present = is_filament_present
